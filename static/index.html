@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>高尔夫记分小程序</title>
+	<style>
+		body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; background: #0b172a; color: #e2e8f0; }
+		header { padding: 16px; background: #0f223f; border-bottom: 1px solid #1f2a44; position: sticky; top: 0; }
+		main { padding: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+		.card { background: #0f223f; border: 1px solid #1f2a44; border-radius: 12px; padding: 16px; box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+		.card h2 { margin-top: 0; font-size: 18px; }
+		.row { display: flex; gap: 8px; margin: 8px 0; }
+		.row input, .row select, .row button { padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; background: #0b172a; color: #e2e8f0; }
+		.row button { background: #3b82f6; border: none; cursor: pointer; }
+		.row button:hover { filter: brightness(1.05); }
+		ul { list-style: none; padding-left: 16px; }
+		.small { font-size: 12px; color: #94a3b8; }
+		kbd { background: #1e293b; padding: 2px 6px; border-radius: 6px; border: 1px solid #334155; }
+	</style>
+</head>
+<body>
+	<header>
+		<h1>高尔夫记分小程序</h1>
+		<div class="small">API 前缀 <kbd>/api</kbd> · 简易演示用途</div>
+	</header>
+	<main>
+		<section class="card">
+			<h2>创建比赛</h2>
+			<div class="row">
+				<input id="match-name" placeholder="比赛名称" />
+				<input id="match-holes" type="number" min="1" max="36" value="18" />
+				<button onclick="createMatch()">创建</button>
+			</div>
+			<div id="create-result" class="small"></div>
+		</section>
+
+		<section class="card">
+			<h2>比赛列表</h2>
+			<div class="row">
+				<select id="matches" onchange="onMatchChange()"></select>
+				<button onclick="loadMatches()">刷新</button>
+			</div>
+			<ul id="match-info"></ul>
+		</section>
+
+		<section class="card">
+			<h2>添加选手到比赛</h2>
+			<div class="row">
+				<input id="player-name" placeholder="选手姓名" />
+				<button onclick="addPlayer()">添加</button>
+			</div>
+			<ul id="players"></ul>
+		</section>
+
+		<section class="card">
+			<h2>记录成绩</h2>
+			<div class="row">
+				<select id="player-select"></select>
+				<input id="hole-number" type="number" min="1" value="1" />
+				<input id="strokes" type="number" min="1" value="4" />
+				<button onclick="recordScore()">记录/更新</button>
+			</div>
+			<div id="score-result" class="small"></div>
+		</section>
+
+		<section class="card">
+			<h2>排行榜</h2>
+			<div class="row"><button onclick="loadLeaderboard()">查看排行榜</button></div>
+			<ul id="leaderboard"></ul>
+		</section>
+	</main>
+
+	<script>
+		const api = (path) => `/api${path}`;
+		async function http(url, options={}) {
+			const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
+			if (!res.ok) throw new Error(await res.text());
+			return res.json();
+		}
+
+		let currentMatchId = null;
+
+		async function createMatch() {
+			const name = document.getElementById('match-name').value.trim();
+			const num_holes = parseInt(document.getElementById('match-holes').value) || 18;
+			if (!name) return alert('请输入比赛名称');
+			const data = await http(api('/matches'), { method: 'POST', body: JSON.stringify({ name, num_holes }) });
+			document.getElementById('create-result').textContent = `创建成功：#${data.id} ${data.name}`;
+			await loadMatches();
+			setSelectedMatch(data.id);
+		}
+
+		async function loadMatches() {
+			const sel = document.getElementById('matches');
+			sel.innerHTML = '';
+			const matches = await http(api('/matches'));
+			for (const m of matches) {
+				const opt = document.createElement('option');
+				opt.value = m.id; opt.textContent = `#${m.id} ${m.name} (${m.num_holes}洞)`;
+				sel.appendChild(opt);
+			}
+			if (matches.length) {
+				setSelectedMatch(currentMatchId || matches[0].id);
+			}
+			updateMatchInfo();
+		}
+
+		function setSelectedMatch(id) {
+			currentMatchId = id;
+			const sel = document.getElementById('matches');
+			for (const o of sel.options) { if (parseInt(o.value) === parseInt(id)) { o.selected = true; break; } }
+			onMatchChange();
+		}
+
+		async function onMatchChange() {
+			const sel = document.getElementById('matches');
+			currentMatchId = sel.value ? parseInt(sel.value) : null;
+			await updateMatchInfo();
+			await loadPlayers();
+			await loadLeaderboard();
+		}
+
+		async function updateMatchInfo() {
+			const ul = document.getElementById('match-info');
+			ul.innerHTML = '';
+			if (!currentMatchId) return;
+			const m = await http(api(`/matches/${currentMatchId}`));
+			ul.innerHTML = `<li>名称：${m.name}</li><li>洞数：${m.num_holes}</li><li>创建：${new Date(m.created_at).toLocaleString()}</li>`;
+			document.getElementById('hole-number').max = m.num_holes;
+		}
+
+		async function addPlayer() {
+			if (!currentMatchId) return alert('请选择比赛');
+			const name = document.getElementById('player-name').value.trim();
+			if (!name) return alert('请输入选手姓名');
+			await http(api(`/matches/${currentMatchId}/players`), { method: 'POST', body: JSON.stringify({ name }) });
+			document.getElementById('player-name').value = '';
+			await loadPlayers();
+		}
+
+		async function loadPlayers() {
+			if (!currentMatchId) return;
+			const list = await http(api(`/matches/${currentMatchId}/players`));
+			const ul = document.getElementById('players');
+			const select = document.getElementById('player-select');
+			ul.innerHTML = '';
+			select.innerHTML = '';
+			for (const p of list) {
+				const li = document.createElement('li');
+				li.textContent = `#${p.id} ${p.name}`;
+				ul.appendChild(li);
+				const opt = document.createElement('option');
+				opt.value = p.id; opt.textContent = p.name; select.appendChild(opt);
+			}
+		}
+
+		async function recordScore() {
+			if (!currentMatchId) return alert('请选择比赛');
+			const player_id = parseInt(document.getElementById('player-select').value);
+			const hole_number = parseInt(document.getElementById('hole-number').value);
+			const strokes = parseInt(document.getElementById('strokes').value);
+			const data = await http(api(`/matches/${currentMatchId}/scores`), { method: 'POST', body: JSON.stringify({ player_id, hole_number, strokes }) });
+			document.getElementById('score-result').textContent = `已记录：选手#${data.player_id} 第${data.hole_number}洞 ${data.strokes}杆`;
+			await loadLeaderboard();
+		}
+
+		async function loadLeaderboard() {
+			if (!currentMatchId) return;
+			const list = await http(api(`/matches/${currentMatchId}/leaderboard`));
+			const ul = document.getElementById('leaderboard');
+			ul.innerHTML = '';
+			for (const row of list) {
+				const li = document.createElement('li');
+				li.textContent = `${row.player_name}：${row.total_strokes} 杆`;
+				ul.appendChild(li);
+			}
+		}
+
+		loadMatches();
+	</script>
+</body>
+</html>
